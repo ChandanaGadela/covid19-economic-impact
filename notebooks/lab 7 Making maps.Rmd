@@ -1,0 +1,206 @@
+---
+title: "Lab 7 Making maps"
+author: "Chandana Gadela"
+date: "2024-10-12"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Load required libraries
+library(tidyverse)      # A collection of R packages for data manipulation and visualization
+library(maps)           # Provides functions for maps and geographical data
+library(mapdata)       # Extends the 'maps' package with additional data
+library(readxl)        # Allows reading Excel files
+
+```
+loads the libraries that will be used for working with data and creating maps. Each library serves a specific purpose: manipulating data, working with maps, and reading Excel files.
+
+
+```{r}
+
+# Load the datasets from the specified Excel file
+territories_data <- read_excel("/Users/jessy/Desktop/Info Visualization/wk7/Sales Reps.xlsx", sheet = 1)
+sales_reps_data <- read_excel("/Users/jessy/Desktop/Info Visualization/wk7/Sales Reps.xlsx", sheet = 2, col_names = FALSE)
+```
+reads data from an Excel file. The first sheet contains information about the U.S. states and territories, while the second sheet contains information about sales representatives.
+
+
+```{r}
+
+# Clean territories data
+territories <- territories_data %>%
+  select(`U.S. States and Territories`, Abbreviations, `Sales Rep`) %>%  # Select relevant columns
+  mutate(
+    state = tolower(`U.S. States and Territories`),  # Convert state names to lowercase for consistency
+    abbrev = Abbreviations,                           # Create a column for state abbreviations
+    rep_id = as.character(`Sales Rep`)                # Convert Sales Rep ID to character for consistent merging
+  )
+
+```
+clean up the data for U.S. states and territories. select the relevant columns (state name, abbreviation, and sales rep ID), convert the state names to lowercase for consistency, and ensure the sales rep ID is treated as text.
+
+
+```{r}
+# Add Canadian provinces and their sales representatives
+canadian_provinces <- tribble(                       # Create a tibble for Canadian provinces
+  ~state, ~abbrev, ~rep_id,
+  "alberta", "AB", "7",
+  "british columbia", "BC", "9",
+  "manitoba", "MB", "7",
+  "new brunswick", "NB", "3",
+  "newfoundland and labrador", "NL", "3",
+  "northwest territories", "NT", "7",
+  "nova scotia", "NS", "3",
+  "nunavut", "NU", NA_character_,  # No representative assigned
+  "ontario", "ON", "3",
+  "prince edward island", "PE", "3",
+  "quebec", "QC", "3",
+  "saskatchewan", "SK", "7",
+  "yukon", "YT", "7"
+)
+```
+This part manually adds data for Canadian provinces and their corresponding sales representatives. Each row includes the province name, its abbreviation, and the sales rep ID.
+
+
+```{r}
+# Combine US territories with Canadian provinces
+territories <- bind_rows(territories, canadian_provinces)  # Bind the two datasets together
+
+```
+we combine the U.S. state data with the Canadian province data into one dataset, so we can later display both on the same map.
+
+
+```{r}
+# Clean sales representatives data
+sales_reps <- sales_reps_data %>%
+  rename(                     # Rename columns for easier access
+    rep_id = ...1,           # First column as rep_id
+    rep_name = ...2          # Second column as rep_name
+  ) %>%
+  mutate(
+    rep_id = as.character(rep_id)  # Ensure rep_id is character for consistency
+  )
+
+```
+chunk cleans up the sales representatives’ data. It renames the columns to make them easier to work with and ensures the sales rep IDs are treated as text.
+
+
+```{r}
+
+# Define a color palette for each representative
+rep_colors <- c(
+  "1" = "#E41A1C",  # Red
+  "2" = "#377EB8",  # Blue
+  "3" = "#4DAF4A",  # Green
+  "4" = "#984EA3",  # Purple
+  "5" = "#FF7F00",  # Orange
+  "6" = "#FFFF33",  # Yellow
+  "7" = "#A65628",  # Brown
+  "8" = "#F781BF",  # Pink
+  "9" = "#999999"   # Gray
+)
+
+# Get map data for US states
+us_states <- map_data("state")  # Retrieves data for US states
+
+# Get map data for Canadian provinces and territories
+canada_map <- map_data("world") %>%
+  filter(region %in% c("Canada", "alberta", "british columbia", "manitoba", 
+                       "new brunswick", "newfoundland and labrador", 
+                       "northwest territories", "nova scotia", "nunavut", 
+                       "ontario", "prince edward island", "quebec", 
+                       "saskatchewan", "yukon"))  # Filters for Canadian provinces
+
+# Combine both maps (US and Canada)
+us_canada_map <- bind_rows(
+  us_states %>% mutate(country = "USA"),           # Label US states
+  canada_map %>% mutate(country = "Canada")        # Label Canadian provinces
+)
+
+# Add rep_id and abbreviation to US states data
+us_canada_map <- us_canada_map %>%
+  left_join(                                         # Join the territories data to map data
+    territories %>%
+      select(state, rep_id, abbrev) %>%             # Select relevant columns for joining
+      mutate(state = tolower(state)),                # Convert state names to lowercase
+    by = c("region" = "state")                      # Match based on region and state
+  )
+
+# Calculate centers for labeling states and provinces
+region_centers <- us_canada_map %>%
+  group_by(region) %>%                              # Group by region
+  summarize(
+    long = mean(range(long)),                        # Calculate average longitude for positioning
+    lat = mean(range(lat)),                          # Calculate average latitude for positioning
+    rep_id = first(rep_id),                         # Take the first representative ID in the group
+    abbrev = first(abbrev)                          # Take the first abbreviation in the group
+  )
+
+
+
+```
+
+
+```{r}
+
+# Create the main map with both US and Canadian regions
+main_map <- ggplot() +
+  # Plot regions with geom_polygon
+  geom_polygon(data = us_canada_map, 
+               aes(x = long, y = lat, group = group, fill = factor(rep_id)),  # Map aesthetics
+               color = "white", size = 0.5) +  # White border for clarity
+  # Add labels for states and provinces
+  geom_text(data = region_centers,
+            aes(x = long, y = lat, label = abbrev),  # Position labels at calculated centers
+            size = 3.5, fontface = "bold", color = "white") +  # Formatting for labels
+  # Use the custom color palette for filling regions
+  scale_fill_manual(
+    values = rep_colors,                           # Assign colors to reps
+    name = "Sales Representatives",                 # Legend title
+    labels = paste(
+      sales_reps$rep_id,
+      "-", sales_reps$rep_name                    # Create labels for sales reps
+    )
+  ) +
+  # Set coordinate system for better aspect ratio
+  coord_fixed(ratio = 1.3) +                      # Adjust ratio to improve map appearance
+  # Customize the appearance of the map
+  theme_minimal() +                                # Minimal theme for a clean look
+  theme(
+    plot.title = element_text(size = 20, face = "bold", hjust = 0.5),  # Title formatting
+    plot.subtitle = element_text(size = 14, hjust = 0.5),                # Subtitle formatting
+    legend.position = "right",                     # Position the legend
+    legend.title = element_text(size = 12, face = "bold"),  # Legend title formatting
+    legend.text = element_text(size = 10),        # Legend text formatting
+    panel.grid = element_blank(),                  # Remove grid lines
+    axis.text = element_blank(),                   # Remove axis text
+    axis.title = element_blank()                   # Remove axis titles
+  ) +
+  # Add titles and captions to the plot
+  labs(
+    title = "Sales Representative Territories in US and Canada",  # Main title
+    subtitle = "Each region is assigned to a distinct sales representative",  # Subtitle
+    caption = paste0(                                       # Caption with additional information
+      "Note: Kentucky is divided between Rep 1 and Rep 2\n",  # Note about Kentucky
+      "Updated: ", format(Sys.Date(), "%B %d, %Y")        # Date of the update
+    )
+  )
+
+```
+map that shows both U.S. states and Canadian provinces along with their assigned sales representatives, you would merge the cleaned data with map data, assign colors to different sales reps, and label the states and provinces on the map. The rest of the code uses the combined data to generate a clear, labeled map showing the territories.
+
+
+```{r}
+
+# Print the main map to the console
+print(main_map)
+
+# Save the combined map as a PNG file with specified dimensions and resolution
+ggsave("combined_us_canada_sales_map.png", main_map, width = 30, height = 15, dpi = 400)  # Increased dimensions for better clarity
+
+```
+
